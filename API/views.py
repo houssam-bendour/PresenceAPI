@@ -25,17 +25,17 @@ class UserView(APIView):
         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         try:
             user = User.objects.filter(id=payload["user_id"]).first()
-            if user.user_type !=3 :
-              if pk == None:
-                data = User.objects.filter(is_deleted=False)
-                serializer = UserSerializer(data, many=True)
-                return Response(serializer.data,status=status.HTTP_200_OK)
-              else:
-                  data = get_object_or_404(User,id=pk,is_deleted=False)
-                  serializer = UserSerializer(data)
-                  return Response(serializer.data,status=status.HTTP_200_OK)
+            # if user.user_type !=3 :
+            if pk == None:
+              data = User.objects.filter(is_deleted=False)
+              serializer = UserSerializer(data, many=True)
+              return Response(serializer.data,status=status.HTTP_200_OK)
             else:
-                return Response({'message':'utilisateur non autorisé'}, status=status.HTTP_400_BAD_REQUEST)
+                data = get_object_or_404(User,id=pk,is_deleted=False)
+                serializer = UserSerializer(data)
+                return Response(serializer.data,status=status.HTTP_200_OK)
+            # else:
+            #     return Response({'message':'utilisateur non autorisé'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'message':'{}'.format(e)},status=status.HTTP_400_BAD_REQUEST) 
     
@@ -247,15 +247,12 @@ class PresenceList(APIView):
         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         try:
             user = User.objects.filter(id=payload["user_id"]).first()
-            print(user.user_type)
             if pk == None:
               if user.user_type ==2 :
                 session = Session.objects.filter(Q(prof_id=user.id) & Q(is_deleted=False))
                 if not session:
                   return Response({'error': 'not session exicted'}, status=status.HTTP_404_NOT_FOUND)
                 session_ids = session.values_list('id', flat=True)
-                for i in session_ids:
-                  print(i)
                 presences = Presence.objects.filter(Q(session_id__in=session_ids) & Q(is_deleted=False))
                 serializer = PresenceSerializer(presences, many=True)
                 return Response(serializer.data, status=status.HTTP_200_OK)
@@ -278,24 +275,22 @@ class PresenceView(APIView):
     def post(self, request, pk, format=None):
         date_courante = timezone.now().strftime("%Y-%m-%d")
         timec = timezone.now().time().strftime("%H:%M:%S")
-        print(date_courante)
-        print(timec)
-        session = Session.objects.filter(Q(date=date_courante) & Q(start_time__lte=timec) & Q(end_time__gte=timec) & Q(is_deleted=False)).first()
-        if not session:
-            return Response({'error': 'session not found'}, status=status.HTTP_404_NOT_FOUND)
-        print(session.module_id)
         user = User.objects.filter(Q(rfid=pk) &  Q(is_deleted=False)).first()
         if not user:
             return Response({'error': 'user not found'}, status=status.HTTP_404_NOT_FOUND)
-        insc = Inscrire.objects.filter(Q(student_id=user.id) & Q(is_deleted=False) & Q(module_id=session.module_id)).first()
-        if not insc:
-            return Response({'error': 'student not inscrit'}, status=status.HTTP_404_NOT_FOUND)
-        exicted = Presence.objects.filter(Q(student_id=user.id) & Q(is_deleted=False) & Q(session_id=session.id)).first()
+        inscriptions = Inscrire.objects.filter(Q(student_id=user.id) & Q(is_deleted=False))
+        if not inscriptions:
+            return Response({'error': 'Student not inscribed'}, status=status.HTTP_404_NOT_FOUND)
+        module_ids = inscriptions.values_list('module_id', flat=True)
+        sessions = Session.objects.filter(Q(date=date_courante) & Q(start_time__lte=timec) & Q(end_time__gte=timec)&Q(module_id__in=module_ids) & Q(is_deleted=False)).first()
+        if not sessions:
+            return Response({'error': 'session not found'}, status=status.HTTP_404_NOT_FOUND)
+        exicted = Presence.objects.filter(Q(student_id=user.id) & Q(is_deleted=False) & Q(session_id=sessions.id)).first()
         if exicted:
             return Response({'error': 'Already present'}, status=status.HTTP_404_NOT_FOUND)
         presence_data = {
             "student_id": user.id,
-            "session_id": session.id,
+            "session_id": sessions.id,
             "pointing": timec,
         }
         serializer = PresenceSerializer(data=presence_data)
@@ -422,3 +417,123 @@ class SessionView(APIView):
         except Exception as e:
             return Response({'message':'{}'.format(e)},status=status.HTTP_400_BAD_REQUEST) 
     
+
+class Userinfo(APIView):
+    permission_classes = (IsAuthenticated,)
+    def get(self, request):
+        date_courante = timezone.now().strftime("%Y-%m-%d")
+        token = request.META.get('HTTP_AUTHORIZATION') 
+        token = token.replace('Bearer ', '')
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        try:
+            user = User.objects.filter(id=payload["user_id"]).first()
+            if user.user_type==3:
+              inscriptions = Inscrire.objects.filter(Q(student_id=user.id) & Q(is_deleted=False))
+              if not inscriptions:
+                  return Response({'error': 'Student not inscribed'}, status=status.HTTP_404_NOT_FOUND)
+              module_ids = inscriptions.values_list('module_id', flat=True)
+              new_seances = Session.objects.filter(Q(date__gte=date_courante)&Q(module_id__in=module_ids) & Q(is_deleted=False)).count()
+              olde_seances = Session.objects.filter(Q(date__lte=date_courante) &Q(module_id__in=module_ids) & Q(is_deleted=False)).count()
+              presences = Presence.objects.filter(Q(student_id=user.id) & Q(is_deleted=False)).count()
+              seances_ratees=olde_seances-presences
+              studentinfo_data = {
+                            "email": user.email,
+                            "first_name": user.first_name,
+                            "last_name": user.last_name,
+                            "CNE": user.CNE,
+                            "seances_ratees": seances_ratees,
+                            "new_seances": new_seances,
+                            "user_type": user.user_type,
+                            }
+              serializer = StudentInfoSerializer(data=studentinfo_data)
+              if serializer.is_valid():
+                  return Response(serializer.data, status=status.HTTP_201_CREATED)
+              return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                serializer = UserSerializer(user)
+                return Response(serializer.data,status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({'message':'{}'.format(e)},status=status.HTTP_400_BAD_REQUEST) 
+
+
+# class Profview(APIView):
+#     permission_classes = (IsAuthenticated,)
+#     def get(self, request):
+#         token = request.META.get('HTTP_AUTHORIZATION') 
+#         token = token.replace('Bearer ', '')
+#         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+#         try:
+#             user = User.objects.filter(id=payload["user_id"]).first()
+#             inscriptions = Inscrire.objects.filter(Q(student_id=user.id) & Q(is_deleted=False))
+#             if not inscriptions:
+#                 return Response({'error': 'Student not inscribed'}, status=status.HTTP_404_NOT_FOUND)
+#             module_ids = inscriptions.values_list('module_id', flat=True)
+#             modules = Module.objects.filter(Q(id__in=module_ids) & Q(is_deleted=False)).first()
+#             if not modules:
+#               return Response({'error': 'Modules not found'}, status=status.HTTP_404_NOT_FOUND)
+#             serializer = ModuleSerializer(data=modules,many=True)
+#             if serializer.is_valid():
+#                 return Response(serializer.data, status=status.HTTP_201_CREATED)
+#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+#         except Exception as e:
+#             return Response({'message':'{}'.format(e)},status=status.HTTP_400_BAD_REQUEST) 
+
+
+
+
+class Moduleinfo(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, pk):
+        date_courante = timezone.now().strftime("%Y-%m-%d")
+        token = request.META.get('HTTP_AUTHORIZATION') 
+        token = token.replace('Bearer ', '')
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        try:
+            user = User.objects.filter(id=payload["user_id"]).first()
+            if user.user_type==3:
+              new_seances = Session.objects.filter(Q(date__gte=date_courante) & Q(module_id=pk) & Q(is_deleted=False))
+              if not new_seances.exists():
+                  return Response({'error': 'No sessions found'}, status=status.HTTP_404_NOT_FOUND)
+              
+              # Note: No `data=` keyword here; directly passing the queryset.
+              serializer = SessionSerializer(new_seances, many=True)
+              
+              # Now `.data` can be accessed safely since we're serializing, not deserializing.
+              return Response(serializer.data, status=status.HTTP_200_OK)  # Use HTTP_200_OK for successful GET requests
+            elif user.user_type==2:
+              seances = Session.objects.filter(Q(date__lte=date_courante) & Q(module_id=pk) & Q(is_deleted=False))
+              if not seances.exists():
+                  return Response({'error': 'No sessions found'}, status=status.HTTP_404_NOT_FOUND)
+              serializer = SessionSerializer(seances, many=True)
+              
+              # Now `.data` can be accessed safely since we're serializing, not deserializing.
+              return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'message': '{}'.format(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SessionDetaile(APIView):
+    permission_classes=(IsAuthenticated,)
+    def get(self, request,pk, format=None):
+        try:
+            presences = Presence.objects.filter(Q(session_id=pk) & Q(is_deleted=False))
+            if not presences:
+              return Response({'error': 'aucun presence'}, status=status.HTTP_404_NOT_FOUND)
+            serializer = PresenceSerializer(presences, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'message':'{}'.format(e)},status=status.HTTP_400_BAD_REQUEST)        
+
+
+class SessionModule(APIView):
+   permission_classes=(IsAuthenticated,)
+   def get(self, request,pk, format=None):
+        try:
+                sessions = Session.objects.filter(Q(module_id=pk) & Q(is_deleted=False))
+                serializer = SessionSerializer(sessions, many=True)
+                return Response(serializer.data)
+        except Exception as e:
+            return Response({'message':'{}'.format(e)},status=status.HTTP_400_BAD_REQUEST) 

@@ -54,5 +54,10 @@ class PresenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Presence
         fields = "__all__"
+
+class StudentInfoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StudentInfo
+        fields = "__all__"
         
         

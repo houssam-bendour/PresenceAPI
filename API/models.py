@@ -48,3 +48,18 @@ class Presence(models.Model):
     pointing = models.TimeField()
     is_deleted = models.BooleanField(default=False)
 
+
+
+class StudentInfo(models.Model):
+    id = models.UUIDField(default=uuid.uuid4, primary_key=True, unique=True, editable=False)
+    email = models.CharField(max_length=50, unique=True)
+    first_name = models.CharField(max_length=50, blank=True, null=True)
+    last_name = models.CharField(max_length=50, blank=True, null=True)
+    CNE = models.CharField(max_length=50,  blank=True, null=True)
+    seances_ratees = models.PositiveSmallIntegerField(default=0)
+    new_seances = models.PositiveSmallIntegerField(default=0)
+    user_type = models.PositiveSmallIntegerField(choices=USER_TYPE_CHOICES, default=3)
+
+
+
+
